@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>가계부 (스크롤 가능 버전)</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #entries-container { max-height: 400px; overflow-y: auto; margin-top: 20px; }
+        #entries, #monthly-summary-table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
+        th { background-color: #f4f4f4; }
+        /* 선택 열 10%, 날짜 열 30% */
+        #entries th:nth-child(1), #entries td:nth-child(1) { width: 10%; }
+        #entries th:nth-child(2), #entries td:nth-child(2) { width: 30%; }
+        #total-container { position: fixed; bottom: 40px; left: 0; width: 100%; background: #fafafa; border-top: 1px solid #ccc; padding: 10px; text-align: right; }
+        #pagination { text-align: center; margin-top: 10px; }
+        .page-btn { margin: 0 5px; padding: 4px 8px; cursor: pointer; }
+        input[type="date"], input[type="number"] { padding: 4px; font-size: 14px; margin-left: 5px; }
+        button.mode-btn { margin-left: 10px; padding: 4px 8px; font-size: 14px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>가계부</h1>
+    <div>
+        <label for="date">날짜: </label>
+        <input type="date" id="date">
+        <label for="amount">금액: </label>
+        <input type="number" id="amount" placeholder="금액 입력">
+        <button id="addBtn" class="mode-btn">추가</button>
+        <button id="deleteBtn" class="mode-btn">삭제</button>
+    </div>
+
+    <div style="margin-top:20px;">
+        <h2>월별 누적 합계</h2>
+        <table id="monthly-summary-table">
+            <thead>
+                <tr><th>월</th><th>합계</th></tr>
+            </thead>
+            <tbody id="monthly-summary-body"></tbody>
+        </table>
+    </div>
+
+    <div id="entries-container">
+        <table id="entries">
+            <thead>
+                <tr><th>선택</th><th>날짜</th><th>금액</th><th>누적 합계</th></tr>
+            </thead>
+            <tbody id="entries-body"></tbody>
+        </table>
+    </div>
+
+    <div id="pagination"></div>
+    <div id="total-container">전체 누적 합계: <span id="total-sum">0</span> 원</div>
+
+    <script>
+        function formatDate(d) {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+        }
+        document.getElementById('date').value = formatDate(new Date());
+
+        function getStorageKey(dateStr) {
+            const [y, m] = dateStr.split('-');
+            return `entries_${y}-${m}`;
+        }
+
+        function loadEntries(key) {
+            const data = localStorage.getItem(key);
+            return data ? JSON.parse(data) : [];
+        }
+
+        function loadAllEntriesWithIndex() {
+            const all = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key.startsWith('entries_')) {
+                    const arr = loadEntries(key);
+                    arr.forEach((item, idx) => all.push({ date: item.date, amount: item.amount, storageKey: key, index: idx }));
+                }
+            }
+            return all;
+        }
+
+        let currentPage = 1;
+        const rowsPerPage = 15;
+
+        function renderMonthlySummary(entries) {
+            const body = document.getElementById('monthly-summary-body');
+            body.innerHTML = '';
+            const map = {};
+            entries.forEach(item => {
+                const month = item.date.slice(0, 7);
+                map[month] = (map[month] || 0) + item.amount;
+            });
+            Object.keys(map).sort().reverse().forEach(month => {
+                const tr = document.createElement('tr');
+                const tdM = document.createElement('td'); tdM.textContent = month;
+                const tdS = document.createElement('td'); tdS.textContent = map[month].toLocaleString();
+                tr.appendChild(tdM); tr.appendChild(tdS); body.appendChild(tr);
+            });
+        }
+
+        function renderEntries() {
+            const body = document.getElementById('entries-body'); body.innerHTML = '';
+            const all = loadAllEntriesWithIndex();
+            all.sort((a, b) => new Date(b.date) - new Date(a.date));
+            renderMonthlySummary(all);
+            let total = 0; all.forEach(i => total += i.amount);
+            document.getElementById('total-sum').textContent = total.toLocaleString();
+            const totalRows = all.length;
+            const totalPages = Math.ceil(totalRows / rowsPerPage) || 1;
+            if (currentPage > totalPages) currentPage = totalPages;
+            const start = (currentPage - 1) * rowsPerPage;
+            const pageEntries = all.slice(start, start + rowsPerPage);
+            let cum = 0;
+            pageEntries.forEach(item => {
+                cum += item.amount;
+                const tr = document.createElement('tr');
+                const tdC = document.createElement('td');
+                const cb = document.createElement('input'); cb.type = 'checkbox';
+                cb.dataset.key = item.storageKey; cb.dataset.idx = item.index;
+                tdC.appendChild(cb);
+                const tdD = document.createElement('td'); tdD.textContent = item.date;
+                const tdA = document.createElement('td'); tdA.textContent = item.amount.toLocaleString();
+                const tdCU = document.createElement('td'); tdCU.textContent = cum.toLocaleString();
+                tr.appendChild(tdC); tr.appendChild(tdD); tr.appendChild(tdA); tr.appendChild(tdCU);
+                body.appendChild(tr);
+            });
+            renderPagination(totalPages);
+        }
+
+        function renderPagination(totalPages) {
+            const pag = document.getElementById('pagination'); pag.innerHTML = '';
+            for (let i = 1; i <= totalPages; i++) {
+                const span = document.createElement('span'); span.textContent = i; span.className = 'page-btn';
+                if (i === currentPage) span.style.fontWeight = 'bold';
+                span.addEventListener('click', () => { currentPage = i; renderEntries(); });
+                pag.appendChild(span);
+            }
+        }
+
+        document.getElementById('addBtn').addEventListener('click', () => {
+            const amt = parseInt(document.getElementById('amount').value, 10);
+            const dt = document.getElementById('date').value;
+            if (!dt) { alert('날짜를 선택하세요'); return; }
+            if (isNaN(amt) || amt <= 0) { alert('유효한 금액을 입력하세요'); return; }
+            const key = getStorageKey(dt);
+            const arr = loadEntries(key);
+            arr.push({ date: dt, amount: amt });
+            localStorage.setItem(key, JSON.stringify(arr));
+            document.getElementById('amount').value = '';
+            // 새로운 총 개수 계산 후 마지막 페이지로 이동
+            const allEntries = loadAllEntriesWithIndex();
+            currentPage = Math.ceil(allEntries.length / rowsPerPage);
+            renderEntries();
+            // 스크롤 맨 아래 이동
+            setTimeout(() => {
+                const container = document.getElementById('entries-container');
+                container.scrollTop = container.scrollHeight;
+            }, 0);
+        });
+
+        document.getElementById('deleteBtn').addEventListener('click', () => {
+            const cbs = document.querySelectorAll('#entries-body input[type="checkbox"]:checked');
+            if (cbs.length === 0) { alert('삭제할 항목을 선택하세요'); return; }
+            cbs.forEach(cb => {
+                const key = cb.dataset.key;
+                const idx = parseInt(cb.dataset.idx, 10);
+                let arr = loadEntries(key);
+                if (idx > -1 && idx < arr.length) {
+                    arr.splice(idx, 1);
+                    localStorage.setItem(key, JSON.stringify(arr));
+                }
+            });
+            renderEntries();
+        });
+
+        renderEntries();
+    </script>
+</body>
+</html>
